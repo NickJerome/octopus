@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/bestruirui/octopus/internal/conf"
@@ -19,6 +20,10 @@ func init() {
 				Handle(latest),
 		).
 		AddRoute(
+			router.NewRoute("/status", http.MethodGet).
+				Handle(getUpdateStatus),
+		).
+		AddRoute(
 			router.NewRoute("/now-version", http.MethodGet).
 				Handle(getNowVersion),
 		).
@@ -29,7 +34,8 @@ func init() {
 }
 
 func latest(c *gin.Context) {
-	latestInfo, err := update.GetLatestInfo()
+	c.Header("Cache-Control", "no-store")
+	latestInfo, err := update.GetLatestInfo(c.Request.Context())
 	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -38,14 +44,33 @@ func latest(c *gin.Context) {
 }
 
 func getNowVersion(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	resp.Success(c, conf.Version)
 }
 
+func getUpdateStatus(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	resp.Success(c, update.GetStatus())
+}
+
 func updateFunc(c *gin.Context) {
-	err := update.UpdateCore()
+	var request struct {
+		Version string `json:"version"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil || request.Version == "" {
+		resp.Error(c, http.StatusBadRequest, "a target release version is required")
+		return
+	}
+	installation, err := update.UpdateCore(c.Request.Context(), request.Version)
 	if err != nil {
+		if errors.Is(err, update.ErrUpdateInProgress) {
+			resp.Error(c, http.StatusConflict, err.Error())
+			return
+		}
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	resp.Success(c, "update success")
+	resp.Success(c, installation)
+	c.Writer.Flush()
+	go installation.Restart()
 }

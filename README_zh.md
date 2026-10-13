@@ -10,6 +10,8 @@
 
 </div>
 
+> 本仓库是基于 [bestruirui/octopus](https://github.com/bestruirui/octopus) 持续维护的自有版本，包含渠道请求转换功能。程序默认从 `NickJerome/octopus` 检查更新。首次使用下方下载链接或镜像前，需先发布本仓库的版本。维护、发布与迁移步骤见 [自有版本维护指南](docs/fork-maintenance.md)。
+
 
 ## ✨ 特性
 
@@ -33,20 +35,20 @@
 直接运行
 
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 bestrui/octopus
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/nickjerome/octopus:latest
 ```
 
 或者使用 docker compose 运行
 
 ```bash
-wget https://raw.githubusercontent.com/bestruirui/octopus/refs/heads/master/docker-compose.yml
+wget https://raw.githubusercontent.com/NickJerome/octopus/refs/heads/master/docker-compose.yml
 docker compose up -d
 ```
 
 
 ### 📦 从 Release 下载
 
-从 [Releases](https://github.com/bestruirui/octopus/releases) 下载对应平台的二进制文件，然后运行：
+从 [Releases](https://github.com/NickJerome/octopus/releases) 下载对应平台的二进制文件，然后运行：
 
 ```bash
 ./octopus start
@@ -55,16 +57,16 @@ docker compose up -d
 ### 🛠️ 源码运行
 
 **环境要求：**
-- Go 1.24.4
-- Node.js 18+
+- Go 1.26.4 (see go.mod)
+- Node.js 24+
 - pnpm
 
 ```bash
 # 克隆项目
-git clone https://github.com/bestruirui/octopus.git
+git clone https://github.com/NickJerome/octopus.git
 cd octopus
 # 构建前端
-cd web && pnpm install && pnpm run build
+cd web && pnpm install --frozen-lockfile && pnpm run build && cd ..
 # 启动后端服务
 go run main.go start 
 ```
@@ -108,6 +110,10 @@ http://localhost:5173
   },
   "log": {
     "level": "info"
+  },
+  "update": {
+    "repository": "NickJerome/octopus",
+    "enabled": true
   }
 }
 ```
@@ -121,6 +127,8 @@ http://localhost:5173
 | `database.type` | 数据库类型 | `sqlite` |
 | `database.path` | 数据库连接地址 | `data/data.db` |
 | `log.level` | 日志级别 | `info` |
+| `update.repository` | 自有更新源（owner/repo） | `NickJerome/octopus` |
+| `update.enabled` | 启用在线升级（容器中默认关闭） | `true` |
 
 **数据库配置：**
 
@@ -167,7 +175,9 @@ http://localhost:5173
 | `OCTOPUS_DATABASE_TYPE` | `database.type` |
 | `OCTOPUS_DATABASE_PATH` | `database.path` |
 | `OCTOPUS_LOG_LEVEL` | `log.level` |
-| `OCTOPUS_GITHUB_PAT` | 用于获取最新版本时的速率限制(可选) |
+| `OCTOPUS_UPDATE_REPOSITORY` | `update.repository` |
+| `OCTOPUS_UPDATE_ENABLED` | `update.enabled` |
+| `OCTOPUS_GITHUB_PAT` | 可选：访问私有仓库及提高 GitHub API 配额 |
 
 
 ## 📸 界面预览

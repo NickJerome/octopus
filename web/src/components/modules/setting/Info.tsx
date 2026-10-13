@@ -1,27 +1,32 @@
 import { useTranslations } from 'use-intl';
 import { Info, Tag, AlertTriangle, Download, Loader2 } from 'lucide-react';
 import Github from '@thesvg/react/github';
-import { useLatestInfo, useNowVersion, useUpdateCore } from '@/api/update';
+import { useLatestInfo, useUpdateStatus, useUpdateCore, UpdateRestartTimeout } from '@/api/update';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 
 const APP_VERSION = import.meta.env.VITE_APP_VERSION || 'unknown'; // 当前前端构建对应的应用版本。
-const GITHUB_REPO = import.meta.env.VITE_GITHUB_REPO || 'https://github.com/bestruirui/octopus'; // 项目仓库地址。
+const STABLE_VERSION = /^v\d+\.\d+\.\d+$/;
 
 // SettingInfo 展示版本信息，并在更新后清理本项目的浏览器缓存。
 export function SettingInfo() {
     const t = useTranslations('setting');
-    const latestInfoQuery = useLatestInfo();
-    const nowVersionQuery = useNowVersion();
+    const statusQuery = useUpdateStatus();
+    const status = statusQuery.data;
+    const latestInfoQuery = useLatestInfo(status?.enabled === true);
     const updateCore = useUpdateCore();
 
-    const backendNowVersion = nowVersionQuery.data || '';
+    const backendNowVersion = status?.current_version || '';
     const latestVersion = latestInfoQuery.data?.tag_name || '';
 
     // 前端版本与后端当前版本不一致 → 浏览器缓存问题
-    const isCacheMismatch = !!backendNowVersion && backendNowVersion !== APP_VERSION;
-    // 最新版本与后端当前版本不一致 → 有新版本可更新
-    const hasNewVersion = latestVersion && backendNowVersion && latestVersion !== backendNowVersion;
+    const isCacheMismatch = STABLE_VERSION.test(backendNowVersion) && STABLE_VERSION.test(APP_VERSION) && backendNowVersion !== APP_VERSION;
+    const hasNewVersion = status?.enabled && latestInfoQuery.data?.update_available;
+    const updateNotice = statusQuery.isError || latestInfoQuery.isError ? t('info.checkFailed')
+        : status?.disabled_reason === 'development' ? t('info.developmentBuild')
+        : status?.disabled_reason === 'invalid_repository' ? t('info.invalidRepository')
+        : status && !status.enabled ? t('info.updateDisabled')
+        : latestInfoQuery.data?.no_release ? t('info.noRelease') : '';
 
     // clearCacheAndReload 清理当前应用目录的缓存和 Service Worker 注册后刷新页面。
     const clearCacheAndReload = async () => {
@@ -46,16 +51,13 @@ export function SettingInfo() {
 
     // handleUpdate 更新服务端程序，成功后清理旧前端缓存。
     const handleUpdate = () => {
-        updateCore.mutate(undefined, {
+        updateCore.mutate(latestVersion, {
             onSuccess: () => {
                 toast.success(t('info.updateSuccess'));
-                // 更新成功后清理缓存并刷新
-                setTimeout(() => {
-                    void clearCacheAndReload();
-                }, 1500);
+                void clearCacheAndReload();
             },
-            onError: () => {
-                toast.error(t('info.updateFailed'));
+            onError: (error) => {
+                toast.error(error instanceof UpdateRestartTimeout ? t('info.restartTimeout') : `${t('info.updateFailed')}: ${error.message}`);
             }
         });
     };
@@ -70,16 +72,16 @@ export function SettingInfo() {
             <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                     <Github variant="mono" className="h-5 w-5 text-muted-foreground" />
-                    <span className="text-sm font-medium">{t('info.github')}</span>
+                    <span className="text-sm font-medium">{t('info.updateSource')}</span>
                 </div>
-                <a
-                    href={GITHUB_REPO}
+                {status?.repository_url ? <a
+                    href={status.repository_url}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-sm text-primary hover:underline"
                 >
-                    {GITHUB_REPO.replace('https://github.com/', '')}
-                </a>
+                    {status.repository}
+                </a> : <span className="text-sm text-muted-foreground">{status?.repository || t('info.unknown')}</span>}
             </div>
             {/* 当前版本 */}
             <div className="flex items-center justify-between gap-4">
@@ -88,7 +90,7 @@ export function SettingInfo() {
                     <span className="text-sm font-medium">{t('info.currentVersion')}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                    {nowVersionQuery.isLoading ? (
+                    {statusQuery.isLoading ? (
                         <Loader2 className="size-4 animate-spin text-muted-foreground" />
                     ) : (
                         <code className="text-sm font-mono text-muted-foreground">
@@ -109,11 +111,13 @@ export function SettingInfo() {
                         <Loader2 className="size-4 animate-spin text-muted-foreground" />
                     ) : (
                         <code className="text-sm font-mono text-muted-foreground">
-                            {latestVersion || t('info.unknown')}
+                            {status?.enabled ? latestVersion || t('info.unknown') : '—'}
                         </code>
                     )}
                 </div>
             </div>
+
+            {updateNotice && <p className="text-sm text-muted-foreground">{updateNotice}</p>}
 
             {/* 浏览器缓存问题警告 */}
             {isCacheMismatch && (
@@ -154,6 +158,9 @@ export function SettingInfo() {
                             <p className="text-xs text-muted-foreground">
                                 {t('info.newVersionAvailableHint')}
                             </p>
+                            <a className="text-xs text-primary hover:underline" href={latestInfoQuery.data?.release_url} target="_blank" rel="noopener noreferrer">
+                                {t('info.releaseNotes')}
+                            </a>
                         </div>
                     </div>
                     <div className="flex justify-end">

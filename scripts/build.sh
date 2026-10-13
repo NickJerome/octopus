@@ -3,12 +3,26 @@ set -euo pipefail
 
 readonly APP_NAME="octopus" # 发布产物和容器内的可执行文件名。
 readonly OUTPUT_DIR="build" # 所有构建、归档和容器输入的根目录。
-readonly VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo 'dev')" # 当前发布版本。
 readonly COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')" # 当前提交短哈希。
+# Only an exact stable tag on a clean checkout is a release by default.
+# CI supplies BUILD_VERSION explicitly because asset generation changes the checkout.
+version="${BUILD_VERSION:-}"
+if [[ -z "${version}" ]]; then
+    version="$(git describe --tags --exact-match 2>/dev/null || true)"
+    if [[ ! "${version}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+        version="dev-${COMMIT}"
+    fi
+fi
+[[ "${version}" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Invalid BUILD_VERSION" >&2; exit 1; }
+readonly VERSION="${version}"
+readonly REPOSITORY="${UPDATE_REPOSITORY:-NickJerome/octopus}"
+[[ "${REPOSITORY}" =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] || { echo "Invalid UPDATE_REPOSITORY (expected owner/repo)" >&2; exit 1; }
 readonly LDFLAGS="-X 'github.com/bestruirui/${APP_NAME}/internal/conf.Version=${VERSION}' \
                   -X 'github.com/bestruirui/${APP_NAME}/internal/conf.BuildTime=$(TZ='Asia/Shanghai' date +'%F %T %z')' \
                   -X 'github.com/bestruirui/${APP_NAME}/internal/conf.Author=bestrui' \
                   -X 'github.com/bestruirui/${APP_NAME}/internal/conf.Commit=${COMMIT}' \
+                  -X 'github.com/bestruirui/${APP_NAME}/internal/conf.Repo=https://github.com/${REPOSITORY}' \
+                  -X 'github.com/bestruirui/${APP_NAME}/internal/conf.UpdateRepository=${REPOSITORY}' \
                   -s -w" # 注入版本信息并缩小发布二进制。
 
 build_standard() {

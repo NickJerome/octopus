@@ -2,6 +2,8 @@ name: build
 
 on:
   push:
+    branches: ['**']
+  pull_request:
 
 permissions:
   contents: read
@@ -31,6 +33,8 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm run build
+        env:
+          VITE_APP_VERSION: dev-${{ github.sha }}
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -47,4 +51,9 @@ jobs:
         run: python3 scripts/updatePrice.py
 
       - name: Build backend
-        run: go build -trimpath -tags=jsoniter .
+        env:
+          BUILD_VERSION: dev-${{ github.sha }}
+          UPDATE_REPOSITORY: ${{ github.repository }}
+        run: |
+          go test ./...
+          go build -trimpath -tags=jsoniter -ldflags="-X github.com/bestruirui/octopus/internal/conf.Version=${BUILD_VERSION} -X github.com/bestruirui/octopus/internal/conf.UpdateRepository=${UPDATE_REPOSITORY} -X github.com/bestruirui/octopus/internal/conf.Repo=https://github.com/${UPDATE_REPOSITORY}" .

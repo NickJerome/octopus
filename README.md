@@ -10,6 +10,8 @@
 
 </div>
 
+> This is a maintained fork of [bestruirui/octopus](https://github.com/bestruirui/octopus), including channel request transforms. Updates default to `NickJerome/octopus`. Publish a release in this repository before using the download links or container image below. See the [fork maintenance guide (Chinese)](docs/fork-maintenance.md) for releases, migration and upstream merges.
+
 
 ## ✨ Features
 
@@ -33,20 +35,20 @@
 Run directly:
 
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 bestrui/octopus
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/nickjerome/octopus:latest
 ```
 
 Or use docker compose:
 
 ```bash
-wget https://raw.githubusercontent.com/bestruirui/octopus/refs/heads/master/docker-compose.yml
+wget https://raw.githubusercontent.com/NickJerome/octopus/refs/heads/master/docker-compose.yml
 docker compose up -d
 ```
 
 
 ### 📦 Download from Release
 
-Download the binary for your platform from [Releases](https://github.com/bestruirui/octopus/releases), then run:
+Download the binary for your platform from [Releases](https://github.com/NickJerome/octopus/releases), then run:
 
 ```bash
 ./octopus start
@@ -55,16 +57,16 @@ Download the binary for your platform from [Releases](https://github.com/bestrui
 ### 🛠️ Build from Source
 
 **Requirements:**
-- Go 1.24.4
-- Node.js 18+
+- Go 1.26.4 (see go.mod)
+- Node.js 24+
 - pnpm
 
 ```bash
 # Clone the repository
-git clone https://github.com/bestruirui/octopus.git
+git clone https://github.com/NickJerome/octopus.git
 cd octopus
 # Build frontend
-cd web && pnpm install && pnpm run build
+cd web && pnpm install --frozen-lockfile && pnpm run build && cd ..
 # Start the backend service
 go run main.go start 
 ```
@@ -108,6 +110,10 @@ The configuration file is located at `data/config.json` by default and is automa
   },
   "log": {
     "level": "info"
+  },
+  "update": {
+    "repository": "NickJerome/octopus",
+    "enabled": true
   }
 }
 ```
@@ -121,6 +127,8 @@ The configuration file is located at `data/config.json` by default and is automa
 | `database.type` | Database type | `sqlite` |
 | `database.path` | Database connection string | `data/data.db` |
 | `log.level` | Log level | `info` |
+| `update.repository` | Update repository (owner/repo) | `NickJerome/octopus` |
+| `update.enabled` | Enable self-update (disabled in containers) | `true` |
 
 **Database Configuration:**
 
@@ -167,7 +175,9 @@ All configuration options can be overridden via environment variables using the 
 | `OCTOPUS_DATABASE_TYPE` | `database.type` |
 | `OCTOPUS_DATABASE_PATH` | `database.path` |
 | `OCTOPUS_LOG_LEVEL` | `log.level` |
-| `OCTOPUS_GITHUB_PAT` | For rate limiting when getting the latest version (optional) |
+| `OCTOPUS_UPDATE_REPOSITORY` | `update.repository` |
+| `OCTOPUS_UPDATE_ENABLED` | `update.enabled` |
+| `OCTOPUS_GITHUB_PAT` | Optional: private repository access and higher GitHub API rate limits |
 
 ## 📸 Screenshots
 

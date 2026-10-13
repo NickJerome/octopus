@@ -2,46 +2,57 @@ name: release
 
 on:
   push:
-    branches:
-      - master
-    paths:
-      - main.go
+    tags:
+      - 'v*.*.*'
 
 permissions:
   contents: write
   packages: write
+
+# Serialize releases so an older job cannot overwrite the latest image.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
     name: release
     runs-on: ubuntu-latest
     steps:
-      - name: Free Disk Space
-        uses: endersonmenezes/free-disk-space@v3
-        with:
-          remove_android: true
-          remove_dotnet: true
-          remove_haskell: true
-          remove_tool_cache: true
-          remove_swap: true
-          remove_packages_one_command: true
-          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
-          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
-          rm_cmd: "rmz"
-          rmz_version: "3.1.1"
-
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Publish tag
+      - name: Validate release version
         id: version
-        run: |
-          VERSION=$(grep '^// Version ' main.go | sed 's|^// Version ||' | tr -d ' ')
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          git tag "${VERSION}"
-          git push origin "${VERSION}"
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const version = context.ref.replace(/^refs\/tags\//, '');
+            const stable = /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
+            if (!stable.test(version)) throw new Error('Use a stable vMAJOR.MINOR.PATCH tag');
+            let latest;
+            try {
+              latest = (await github.rest.repos.getLatestRelease(context.repo)).data.tag_name;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            if (latest && stable.test(latest)) {
+              const a = version.slice(1).split('.').map(BigInt);
+              const b = latest.slice(1).split('.').map(BigInt);
+              const diff = a.map((n, i) => n > b[i] ? 1 : n < b[i] ? -1 : 0).find(n => n !== 0) ?? 0;
+              if (diff <= 0) throw new Error('Release version must be newer than ' + latest);
+            }
+            let existing;
+            try {
+              existing = (await github.rest.repos.getReleaseByTag({ ...context.repo, tag: version })).data;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            if (existing && !existing.draft) throw new Error('Published releases must not be overwritten');
+            core.setOutput('version', version);
+            core.setOutput('image', 'ghcr.io/' + (context.repo.owner + '/' + context.repo.repo).toLowerCase());
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -83,30 +94,30 @@ jobs:
         with:
           ndk-version: r28c
 
-      - name: Build
+      - name: Build release archives
         run: bash scripts/build.sh
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          BUILD_VERSION: ${{ steps.version.outputs.version }}
+          UPDATE_REPOSITORY: ${{ github.repository }}
 
-      - name: Generate changelog
-        run: npx changelogithub
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-
-      - name: Upload Release
+      # A draft is not offered to installations until every artifact is ready.
+      - name: Upload draft release
         uses: softprops/action-gh-release@v3
         with:
           files: build/archives/*
+          fail_on_unmatched_files: true
+          draft: true
           prerelease: false
+          make_latest: 'false'
+          generate_release_notes: true
           tag_name: ${{ steps.version.outputs.version }}
 
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: |
-            ghcr.io/${{ github.repository }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}
+          images: ${{ steps.version.outputs.image }}
           tags: |
             type=raw,value=latest
             type=raw,value=${{ steps.version.outputs.version }}
@@ -122,15 +133,9 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ github.token }}
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push
+      - name: Build and push image
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -141,5 +146,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: |
-            TARGETPLATFORM
+
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: gh release edit "$RELEASE_VERSION" --draft=false --latest

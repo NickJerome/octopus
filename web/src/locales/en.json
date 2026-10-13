@@ -288,8 +288,16 @@
             "newVersionAvailableHint": "Please backup your data first, then update the system",
             "updateNow": "Update Now",
             "updating": "Updating...",
-            "updateSuccess": "Update successful, service will restart shortly",
-            "updateFailed": "Update failed"
+            "updateSuccess": "The new version is running. Refreshing…",
+            "updateFailed": "Update failed",
+            "updateSource": "Update repository",
+            "developmentBuild": "Development builds do not install releases automatically. Install a stable build to use self-update.",
+            "invalidRepository": "Invalid update repository. Configure it as owner/repo.",
+            "updateDisabled": "Self-update is disabled. Upgrade using your deployment method.",
+            "noRelease": "No accessible stable release found. Check the repository and access permissions.",
+            "checkFailed": "Could not check for updates. Check the service, GitHub connection and repository access.",
+            "releaseNotes": "View release notes",
+            "restartTimeout": "The new version has not responded yet. Check service logs and startup status before retrying."
         },
         "log": {
             "title": "Log Settings",

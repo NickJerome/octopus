@@ -1,70 +1,73 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiRequest } from './client';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { apiRequest, ApiError } from './client';
 
-/**
- * 后端 /api/v1/update 返回的最新发布信息
- */
+interface UpdateStatus {
+    repository: string;
+    repository_url: string;
+    current_version: string;
+    enabled: boolean;
+    disabled_reason?: 'disabled' | 'development' | 'invalid_repository';
+}
+
 interface LatestInfo {
     tag_name: string;
     published_at: string;
     body: string;
-    message: string;
+    release_url: string;
+    update_available: boolean;
+    no_release: boolean;
 }
 
-/**
- * 获取最新发布信息 Hook
- * 
- * @example
- * const { data: latestInfo, isLoading, error } = useLatestInfo();
- * 
- * if (isLoading) return <Loading />;
- * if (error) return <Error message={error.message} />;
- * 
- * console.log('Latest tag:', latestInfo?.tag_name);
- */
-export function useLatestInfo() {
+export function useUpdateStatus() {
+    return useQuery({
+        queryKey: ['update', 'status'],
+        queryFn: () => apiRequest<UpdateStatus>('/api/v1/update/status'),
+        refetchOnMount: 'always',
+    });
+}
+
+export function useLatestInfo(enabled = true) {
     return useQuery({
         queryKey: ['update', 'latest'],
         queryFn: () => apiRequest<LatestInfo>('/api/v1/update'),
-        refetchInterval: 3600000, // 1 小时
+        enabled,
+        refetchInterval: 3600000,
         refetchOnMount: 'always',
     });
 }
 
-/**
- * 获取后端当前版本 Hook
- *
- * 后端: GET /api/v1/update/now-version -> string
- */
-export function useNowVersion() {
-    return useQuery({
-        queryKey: ['update', 'now-version'],
-        queryFn: () => apiRequest<string>('/api/v1/update/now-version'),
-        refetchInterval: 3600000, // 1 小时
-        refetchOnMount: 'always',
-    });
+export class UpdateRestartTimeout extends Error {}
+
+// Keep the mutation pending until the expected backend is actually serving requests.
+async function waitForVersion(version: string) {
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        try {
+            const current = await apiRequest<string>(`/api/v1/update/now-version?t=${Date.now()}`, {
+                signal: AbortSignal.timeout(5000),
+                dispatchUnauthorized: false,
+            });
+            if (current === version) return;
+        } catch {
+            // Brief disconnections are expected while the process restarts.
+        }
+    }
+    throw new UpdateRestartTimeout('The expected version did not become available within two minutes');
 }
 
-/**
- * 执行更新 Hook
- * 
- * @example
- * const updateCore = useUpdateCore();
- * 
- * updateCore.mutate(undefined, {
- *   onSuccess: () => {
- *     console.log('Update started successfully');
- *   },
- * });
- */
 export function useUpdateCore() {
-    const queryClient = useQueryClient();
-
     return useMutation({
-        mutationFn: () => apiRequest<string>('/api/v1/update', { method: 'POST' }),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['update', 'latest'] });
-            queryClient.invalidateQueries({ queryKey: ['update', 'now-version'] });
+        mutationFn: async (version: string) => {
+            try {
+                await apiRequest<{ version: string }>('/api/v1/update', {
+                    method: 'POST', body: { version },
+                });
+            } catch (error) {
+                if (error instanceof ApiError && ![502, 503, 504].includes(error.status)) throw error;
+                // If restart interrupted the response, check the version before reporting failure.
+            }
+            await waitForVersion(version);
         },
     });
 }

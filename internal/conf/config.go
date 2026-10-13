@@ -23,10 +23,16 @@ type Database struct {
 	Path string `mapstructure:"path"`
 }
 
+type Update struct {
+	Repository string `mapstructure:"repository"`
+	Enabled    bool   `mapstructure:"enabled"`
+}
+
 type Config struct {
 	Server   Server   `mapstructure:"server"`
 	Log      Log      `mapstructure:"log"`
 	Database Database `mapstructure:"database"`
+	Update   Update   `mapstructure:"update"`
 }
 
 var AppConfig Config
@@ -74,4 +80,6 @@ func setDefaults() {
 	viper.SetDefault("database.type", "sqlite")
 	viper.SetDefault("database.path", "data/data.db")
 	viper.SetDefault("log.level", "info")
+	viper.SetDefault("update.repository", UpdateRepository)
+	viper.SetDefault("update.enabled", true)
 }

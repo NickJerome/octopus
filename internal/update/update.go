@@ -4,7 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,32 +18,34 @@ import (
 	"github.com/charmbracelet/log"
 )
 
-const (
-	updateUrl    = "https://github.com/bestruirui/octopus/releases/latest/download"
-	updateApiUrl = "https://api.github.com/repos/bestruirui/octopus/releases/latest"
-)
+type httpError struct{ status int }
 
-type LatestInfo struct {
-	TagName     string `json:"tag_name"`
-	PublishedAt string `json:"published_at"`
-	Body        string `json:"body"`
-	Message     string `json:"message"`
-}
-
-var github_pat = os.Getenv(strings.ToUpper(conf.APP_NAME) + "_GITHUB_PAT")
+func (e *httpError) Error() string { return fmt.Sprintf("GitHub request returned HTTP %d", e.status) }
 
 // doRequestWithFallback performs an HTTP GET request, first without proxy, then with proxy if failed.
-func doRequestWithFallback(url string) ([]byte, error) {
-	data, err := doRequest(url, false)
+func doRequestWithFallback(ctx context.Context, url, accept string, limit int64) ([]byte, error) {
+	data, err := doRequest(ctx, url, accept, limit, false)
 	if err == nil {
 		return data, nil
 	}
+	var responseErr *httpError
+	if ctx.Err() != nil || (errors.As(err, &responseErr) && responseErr.status >= 400 && responseErr.status < 500) {
+		return nil, err
+	}
 	log.Warnf("direct request failed, trying with proxy: %v", err)
-	return doRequest(url, true)
+	data, proxyErr := doRequest(ctx, url, accept, limit, true)
+	if proxyErr != nil {
+		return nil, fmt.Errorf("direct request failed (%v); proxy request failed: %w", err, proxyErr)
+	}
+	return data, nil
 }
 
-func doRequest(url string, useProxy bool) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func doRequest(parent context.Context, url, accept string, limit int64, useProxy bool) ([]byte, error) {
+	timeout := 30 * time.Second
+	if accept == "application/octet-stream" {
+		timeout = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
 	var hc *http.Client
@@ -63,8 +65,10 @@ func doRequest(url string, useProxy bool) ([]byte, error) {
 		return nil, err
 	}
 
-	if github_pat != "" {
-		req.Header.Set("Authorization", "Bearer "+github_pat)
+	req.Header.Set("Accept", accept)
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if token := os.Getenv(strings.ToUpper(conf.APP_NAME) + "_GITHUB_PAT"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := hc.Do(req)
@@ -73,30 +77,19 @@ func doRequest(url string, useProxy bool) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, &httpError{status: resp.StatusCode}
+	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		log.Debugf("read body failed: %v", err)
 		return nil, err
 	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("GitHub response exceeds %d bytes", limit)
+	}
 	return data, nil
-}
-
-func GetLatestInfo() (*LatestInfo, error) {
-	body, err := doRequestWithFallback(updateApiUrl)
-	if err != nil {
-		return nil, err
-	}
-
-	var latestInfo LatestInfo
-	if err := json.Unmarshal(body, &latestInfo); err != nil {
-		log.Debugf("unmarshal body failed: %v", err)
-		return nil, err
-	}
-	if latestInfo.Message != "" {
-		return nil, fmt.Errorf("failed to get latest info: %s", latestInfo.Message)
-	}
-	return &latestInfo, nil
 }
 
 func unzip(data []byte, dest string) error {
@@ -106,7 +99,12 @@ func unzip(data []byte, dest string) error {
 		return err
 	}
 
+	var expanded uint64
 	for _, f := range r.File {
+		if f.UncompressedSize64 > (512<<20)-expanded {
+			return fmt.Errorf("expanded release exceeds 512 MiB")
+		}
+		expanded += f.UncompressedSize64
 		fpath := filepath.Join(dest, f.Name)
 
 		if !isPathInDest(fpath, dest) {
@@ -116,11 +114,13 @@ func unzip(data []byte, dest string) error {
 
 		info := f.FileInfo()
 		if info.IsDir() {
-			os.MkdirAll(fpath, os.ModePerm)
+			if err := os.MkdirAll(fpath, os.ModePerm); err != nil {
+				return err
+			}
 			continue
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			continue
+			return fmt.Errorf("release archive must not contain symbolic links")
 		}
 
 		if err := extractFile(f, fpath); err != nil {
@@ -138,15 +138,7 @@ func extractFile(f *zip.File, fpath string) error {
 
 	outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode().Perm())
 	if err != nil {
-		if err = os.Remove(fpath); err != nil {
-			log.Debugf("remove file failed: %v", err)
-			return err
-		}
-		outFile, err = os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-		if err != nil {
-			log.Debugf("open file failed: %v", err)
-			return err
-		}
+		return err
 	}
 	defer outFile.Close()
 
@@ -157,11 +149,15 @@ func extractFile(f *zip.File, fpath string) error {
 	}
 	defer rc.Close()
 
-	if _, err = io.Copy(outFile, rc); err != nil {
+	written, err := io.Copy(outFile, io.LimitReader(rc, int64(f.UncompressedSize64)+1))
+	if err != nil {
 		log.Debugf("copy failed: %v", err)
 		return err
 	}
-	return nil
+	if written > int64(f.UncompressedSize64) {
+		return fmt.Errorf("release file exceeds declared size")
+	}
+	return outFile.Close()
 }
 
 func isPathInDest(fpath, dest string) bool {
