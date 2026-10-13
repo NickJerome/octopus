@@ -406,7 +406,7 @@
             "errorInfo": "錯誤訊息",
             "unknownModel": "未知模型",
             "detailUnavailable": "正文內容不可用",
-            "requestContent": "請求體",
+            "requestContent": "原始請求",
             "group": "分組",
             "groupUnavailable": "目前請求模型沒有對應分組",
             "noGroupItems": "目前分組沒有可用供應源",
@@ -425,7 +425,19 @@
             "cancelFailed": "取消目前請求失敗",
             "waitingChannelSelection": "正在等待選擇供應源",
             "waitingResponse": "正在等待上游回應",
-            "responseStreaming": "上游已回應，串流傳輸正在進行"
+            "responseStreaming": "上游已回應，串流傳輸正在進行",
+            "upstreamRequest": "上游請求",
+            "upstreamAttempt": "傳送記錄",
+            "latestUpstreamRequest": "跟隨最新傳送",
+            "upstreamAttemptLabel": "第 {round} 輪 · 傳送 #{sequence}",
+            "upstreamHint": "記錄協議轉換及參數改寫後的傳送內容，常見認證欄位已遮蔽。",
+            "noUpstreamRequest": "尚無上游傳送記錄；請求可能仍在等待，或在傳送前已失敗。",
+            "upstreamDropped": "較早的 {count} 筆記錄已因保留上限移除。",
+            "upstreamExpired": "這筆傳送記錄已被移除，請切換到最新傳送。",
+            "upstreamHeaders": "請求標頭（認證已遮蔽）",
+            "upstreamBody": "實際傳送的請求體",
+            "upstreamTruncated": "請求體超過 8 MiB，僅顯示開頭部分；實際傳送內容未截斷。",
+            "upstreamBodyUnavailable": "無法完整讀取此請求的日誌副本，轉發不受影響。"
         }
     },
     "channel": {

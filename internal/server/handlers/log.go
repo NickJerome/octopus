@@ -26,6 +26,14 @@ func init() {
 				Handle(getRequestBody),
 		).
 		AddRoute(
+			router.NewRoute("/upstream-requests/:id", http.MethodGet).
+				Handle(getUpstreamRequests),
+		).
+		AddRoute(
+			router.NewRoute("/upstream-requests/:id/:sequence", http.MethodGet).
+				Handle(getUpstreamRequest),
+		).
+		AddRoute(
 			router.NewRoute("/response-body/:id", http.MethodGet).
 				Handle(getResponseBody),
 		).
@@ -78,6 +86,41 @@ func getRequestBody(c *gin.Context) {
 		return
 	}
 	resp.Success(c, relay.RequestBody(id))
+}
+
+func getUpstreamRequests(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, "invalid request id")
+		return
+	}
+	history, ok := relay.UpstreamRequests(id)
+	if !ok {
+		resp.Error(c, http.StatusNotFound, "request log is no longer available")
+		return
+	}
+	resp.Success(c, history)
+}
+
+func getUpstreamRequest(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, "invalid request id")
+		return
+	}
+	sequence, err := strconv.Atoi(c.Param("sequence"))
+	if err != nil || sequence < 1 {
+		resp.Error(c, http.StatusBadRequest, "invalid send sequence")
+		return
+	}
+	snapshot, ok := relay.UpstreamRequest(id, sequence)
+	if !ok {
+		resp.Error(c, http.StatusNotFound, "upstream request is no longer retained")
+		return
+	}
+	resp.Success(c, snapshot)
 }
 
 // getResponseBody 返回指定请求当前保存的响应体。

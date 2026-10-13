@@ -406,7 +406,7 @@
             "errorInfo": "错误信息",
             "unknownModel": "未知模型",
             "detailUnavailable": "正文内容不可用",
-            "requestContent": "请求体",
+            "requestContent": "原始请求",
             "group": "分组",
             "groupUnavailable": "当前请求模型没有对应分组",
             "noGroupItems": "当前分组没有可用渠道",
@@ -425,7 +425,19 @@
             "cancelFailed": "取消当前请求失败",
             "waitingChannelSelection": "正在等待选择渠道",
             "waitingResponse": "正在等待上游响应",
-            "responseStreaming": "上游已响应，流式传输正在进行"
+            "responseStreaming": "上游已响应，流式传输正在进行",
+            "upstreamRequest": "上游请求",
+            "upstreamAttempt": "发送记录",
+            "latestUpstreamRequest": "跟随最新发送",
+            "upstreamAttemptLabel": "第 {round} 轮 · 发送 #{sequence}",
+            "upstreamHint": "记录协议转换及参数改写后的发送内容，常见认证字段已脱敏。",
+            "noUpstreamRequest": "尚无上游发送记录；请求可能仍在等待，或在发送前已失败。",
+            "upstreamDropped": "较早的 {count} 条记录已因保留上限移除。",
+            "upstreamExpired": "这条发送记录已被移除，请切换到最新发送。",
+            "upstreamHeaders": "请求头（认证已脱敏）",
+            "upstreamBody": "实际发送的请求体",
+            "upstreamTruncated": "请求体超过 8 MiB，仅展示开头部分；实际发送内容未截断。",
+            "upstreamBodyUnavailable": "无法完整读取此请求的日志副本，转发不受影响。"
         }
     },
     "channel": {

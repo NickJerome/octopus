@@ -39,6 +39,7 @@ export interface RelayLogOverview {
     target_model: string;
     target_protocol: number;
     sending: boolean;
+    upstream_request_count: number;
     error?: string;
 }
 
@@ -114,6 +115,47 @@ export function useLogRequestBody(id: number, startedAt: string, enabled: boolea
         queryFn: () => apiRequest<string>(`/api/v1/log/request-body/${id}`),
         enabled,
         staleTime: Infinity,
+    });
+}
+
+// UpstreamRequestInfo lists send attempts without transferring large prompt bodies.
+export interface UpstreamRequestInfo {
+    sequence: number;
+    round: number;
+    captured_at: string;
+    channel_key: string;
+    model: string;
+    protocol: number;
+    method: string;
+    url: string;
+    body_bytes: number;
+    body_truncated: boolean;
+    body_unavailable: boolean;
+}
+
+interface UpstreamRequestSnapshot extends UpstreamRequestInfo {
+    headers: Record<string, string[]>;
+    body: string;
+}
+
+export function useLogUpstreamRequests(log: RelayLogOverview) {
+    return useQuery({
+        queryKey: ['logs', log.id, log.started_at, 'upstream-requests', log.upstream_request_count],
+        queryFn: ({ signal }) => apiRequest<{ items: UpstreamRequestInfo[]; dropped: number }>(`/api/v1/log/upstream-requests/${log.id}`, { signal }),
+        staleTime: Infinity,
+        gcTime: 0,
+        retry: false,
+    });
+}
+
+export function useLogUpstreamRequest(log: RelayLogOverview, sequence?: number) {
+    return useQuery({
+        queryKey: ['logs', log.id, log.started_at, 'upstream-request', sequence],
+        queryFn: ({ signal }) => apiRequest<UpstreamRequestSnapshot>(`/api/v1/log/upstream-requests/${log.id}/${sequence}`, { signal }),
+        enabled: sequence !== undefined,
+        staleTime: Infinity,
+        gcTime: 0,
+        retry: false,
     });
 }
 

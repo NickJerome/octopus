@@ -5,7 +5,7 @@ import JsonView from '@uiw/react-json-view';
 import { githubDarkTheme } from '@uiw/react-json-view/githubDark';
 import { githubLightTheme } from '@uiw/react-json-view/githubLight';
 import { useTheme } from '@/provider/theme';
-import { type RelayLogOverview, useLogRequestBody, useLogResponseBody, useStopRequest } from '@/api/log';
+import { type RelayLogOverview, useLogRequestBody, useLogResponseBody, useLogUpstreamRequests, useLogUpstreamRequest, useStopRequest } from '@/api/log';
 import { useGroup, useUpdateGroup } from '@/api/group';
 import { Protocol } from '@/api/channel';
 import { getModelIcon } from '@/lib/model-icons';
@@ -164,11 +164,68 @@ function JsonContent({ content, fallbackText }: { content: string | object | und
     );
 }
 
+function UpstreamRequestContent({ log }: { log: RelayLogOverview }) {
+    const t = useTranslations('log.card');
+    const history = useLogUpstreamRequests(log);
+    const [selected, setSelected] = useState('latest');
+    const items = history.data?.items ?? [];
+    const sequence = selected === 'latest' ? items[0]?.sequence : Number(selected);
+    const available = items.some((item) => item.sequence === sequence);
+    const snapshot = useLogUpstreamRequest(log, available ? sequence : undefined);
+
+    if (history.isLoading) return <Loader2 className="m-4 size-5 animate-spin text-muted-foreground" />;
+    if (history.isError) return <p className="p-4 text-xs text-destructive">{t('detailUnavailable')}</p>;
+    if (!items.length) return <p className="p-4 text-xs text-muted-foreground">{t('noUpstreamRequest')}</p>;
+
+    return (
+        <div className="min-w-0">
+            <div className="space-y-2 border-b border-border p-3 text-xs">
+                <label className="block space-y-1">
+                    <span className="font-medium">{t('upstreamAttempt')}</span>
+                    <select className="w-full min-w-0 rounded-md border border-border bg-background p-2 text-foreground" value={selected} onChange={(event) => setSelected(event.target.value)}>
+                        <option value="latest">{t('latestUpstreamRequest')}</option>
+                        {!available && selected !== 'latest' && <option value={selected}>{t('upstreamExpired')}</option>}
+                        {items.map((item) => <option key={item.sequence} value={item.sequence}>
+                            {t('upstreamAttemptLabel', { round: item.round, sequence: item.sequence })} · {item.channel_key} · {formatRoundStartedAt(item.captured_at)}
+                        </option>)}
+                    </select>
+                </label>
+                <p className="text-muted-foreground">{t('upstreamHint')}</p>
+                {!!history.data?.dropped && <p className="text-amber-700 dark:text-amber-400">{t('upstreamDropped', { count: history.data.dropped })}</p>}
+            </div>
+            {!available ? <p className="p-4 text-xs text-muted-foreground">{t('upstreamExpired')}</p>
+                : snapshot.isLoading ? <Loader2 className="m-4 size-5 animate-spin text-muted-foreground" />
+                : snapshot.isError ? <p className="p-4 text-xs text-destructive">{t('detailUnavailable')}</p>
+                : snapshot.data && <>
+                    <div className="space-y-2 border-b border-border p-3 text-xs">
+                        <div className="flex flex-wrap gap-2 text-muted-foreground">
+                            <span>{t('upstreamAttemptLabel', { round: snapshot.data.round, sequence: snapshot.data.sequence })}</span>
+                            <span>{PROTOCOL_LABELS[snapshot.data.protocol]}</span>
+                            <span>{snapshot.data.model}</span>
+                        </div>
+                        <code className="block break-all">{snapshot.data.method} {snapshot.data.url}</code>
+                        <details>
+                            <summary className="cursor-pointer text-muted-foreground">{t('upstreamHeaders')}</summary>
+                            <JsonContent content={snapshot.data.headers} fallbackText="" />
+                        </details>
+                    </div>
+                    <div className="flex items-center gap-2 px-3 pt-3 text-xs font-medium">
+                        <span>{t('upstreamBody')}</span>
+                        <CopyIconButton text={snapshot.data.body} className="ml-auto text-muted-foreground hover:text-foreground" copyIconClassName="size-3.5" checkIconClassName="size-3.5" />
+                    </div>
+                    {snapshot.data.body_truncated && <p className="px-3 pt-2 text-xs text-amber-700 dark:text-amber-400">{t('upstreamTruncated')}</p>}
+                    {snapshot.data.body_unavailable && <p className="px-3 pt-2 text-xs text-destructive">{t('upstreamBodyUnavailable')}</p>}
+                    <JsonContent content={snapshot.data.body} fallbackText={t('noRequestContent')} />
+                </>}
+        </div>
+    );
+}
+
 // LogDetail 渲染日志详情弹窗内容, 仅在弹窗打开期间挂载, 由此避免列表中的卡片持有详情查询和状态。
 function LogDetail({ log, now, errorRounds }: { log: RelayLogOverview; now: number; errorRounds: ObservedRound[] }) {
     const t = useTranslations('log.card');
     const statusT = useTranslations('log.status');
-    const [leftTab, setLeftTab] = useState<'request' | 'group'>('group');
+    const [leftTab, setLeftTab] = useState<'request' | 'upstream' | 'group'>('group');
     const [rounds, setRounds] = useState<ObservedRound[]>(errorRounds);
     const [observedRoundKey, setObservedRoundKey] = useState(''); // observedRoundKey 是已记入 rounds 的最近一次日志快照, 用于跳过重复渲染。
     const [detailReady, setDetailReady] = useState(false); // 展开动画结束后才允许加载详情数据。
@@ -249,8 +306,8 @@ function LogDetail({ log, now, errorRounds }: { log: RelayLogOverview; now: numb
             <MorphingDialogDescription className="flex-1 min-h-0">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-full min-h-0">
                     <div className="flex flex-col rounded-2xl border border-border bg-muted/30 overflow-hidden min-h-0">
-                        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-muted/50 pl-1 pr-3 md:pr-4">
-                            <Tabs value={leftTab} onValueChange={(value) => setLeftTab(value as 'request' | 'group')}>
+                        <div className="flex h-10 shrink-0 items-center gap-2 overflow-x-auto border-b border-border bg-muted/50 px-1">
+                            <Tabs value={leftTab} onValueChange={(value) => setLeftTab(value as 'request' | 'upstream' | 'group')}>
                                 <TabsList variant="text" className="p-0">
                                     <TabsTrigger value="group" className="pr-0">
                                         {t('group')}
@@ -259,19 +316,20 @@ function LogDetail({ log, now, errorRounds }: { log: RelayLogOverview; now: numb
                                     <TabsTrigger value="request" className="pl-0">
                                         {t('requestContent')}
                                     </TabsTrigger>
+                                    <span aria-hidden="true" className="mx-1 text-muted-foreground/50">/</span>
+                                    <TabsTrigger value="upstream" className="pl-0">
+                                        {t('upstreamRequest')}
+                                    </TabsTrigger>
                                 </TabsList>
                             </Tabs>
-                            {leftTab === 'request' && (
-                                <Badge variant="secondary" className="ml-auto text-xs">
-                                    {(log.usage.prompt_tokens - (log.usage.prompt_tokens_details?.cached_tokens ?? 0)).toLocaleString()} {t('tokens')}
-                                </Badge>
-                            )}
                         </div>
                         <div className="flex-1 overflow-auto min-h-0">
                             {!detailReady ? (
                                 <div className="flex h-full items-center justify-center">
                                     <Loader2 className="size-5 animate-spin text-muted-foreground" />
                                 </div>
+                            ) : leftTab === 'upstream' ? (
+                                <UpstreamRequestContent log={log} />
                             ) : leftTab === 'request' ? (
                                 requestBody.isLoading ? (
                                     <div className="flex h-full items-center justify-center">
@@ -472,6 +530,7 @@ function LogCardBody({ log }: { log: RelayLogOverview }) {
     const { isOpen } = useMorphingDialog();
     const [now, setNow] = useState(() => Date.now());
     const [displayError, setDisplayError] = useState(log.error ?? ''); // 保留重试期间最近一次错误, 直到响应真正开始。
+    const [observedErrorKey, setObservedErrorKey] = useState('');
     const [errorRounds, setErrorRounds] = useState<ObservedRound[]>(() => log.error ? [{
         round: log.round,
         channelKey: log.target_channel_key,
@@ -492,18 +551,16 @@ function LogCardBody({ log }: { log: RelayLogOverview }) {
         return () => window.clearInterval(timer);
     }, [isOpen, requestRunning]);
 
-    // 新错误覆盖旧错误; 响应已开始或请求成功后清除错误提示。
-    useEffect(() => {
+    // 在输入快照改变时同步保留的错误, 避免 effect 再触发一轮级联渲染。
+    const errorKey = `${log.status}:${log.round}:${log.target_channel_key}:${log.sending}:${log.round_started_at}:${errorText}`;
+    if (errorKey !== observedErrorKey) {
+        setObservedErrorKey(errorKey);
         if (log.status === 'committed' || log.status === 'success') {
             setDisplayError('');
         } else if (errorText) {
             setDisplayError(errorText);
         }
-    }, [errorText, log.status]);
-
-    useEffect(() => {
-        if (!errorText) return;
-        setErrorRounds((current) => [
+        if (errorText) setErrorRounds((current) => [
             {
                 round: log.round,
                 channelKey: log.target_channel_key,
@@ -513,7 +570,7 @@ function LogCardBody({ log }: { log: RelayLogOverview }) {
             },
             ...current.filter((round) => round.round !== log.round),
         ].slice(0, 5));
-    }, [errorText, log.round, log.target_channel_key, log.sending, log.round_started_at]);
+    }
 
     return (
         <>

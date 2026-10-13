@@ -406,7 +406,7 @@
             "errorInfo": "Error Info",
             "unknownModel": "Unknown model",
             "detailUnavailable": "Body content unavailable",
-            "requestContent": "Request Body",
+            "requestContent": "Client request",
             "group": "Group",
             "groupUnavailable": "No group matches this request model",
             "noGroupItems": "No channels are available in this group",
@@ -425,7 +425,19 @@
             "cancelFailed": "Failed to cancel current request",
             "waitingChannelSelection": "Waiting for channel selection",
             "waitingResponse": "Waiting for upstream response",
-            "responseStreaming": "Upstream responded; streaming is in progress"
+            "responseStreaming": "Upstream responded; streaming is in progress",
+            "upstreamRequest": "Upstream request",
+            "upstreamAttempt": "Send attempt",
+            "latestUpstreamRequest": "Follow latest send",
+            "upstreamAttemptLabel": "Round {round} · Send #{sequence}",
+            "upstreamHint": "Captured after protocol conversion and parameter transforms. Common authentication fields are redacted.",
+            "noUpstreamRequest": "No upstream send recorded yet. The request may be waiting or may have failed before sending.",
+            "upstreamDropped": "{count} earlier records were removed by the retention limit.",
+            "upstreamExpired": "This send record is no longer retained. Select the latest send.",
+            "upstreamHeaders": "Headers (authentication redacted)",
+            "upstreamBody": "Actual outgoing body",
+            "upstreamTruncated": "Body exceeds 8 MiB; only its beginning is displayed. The outgoing request was not truncated.",
+            "upstreamBodyUnavailable": "Could not read the complete logging copy. Forwarding was unaffected."
         }
     },
     "channel": {

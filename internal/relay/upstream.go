@@ -64,6 +64,7 @@ func sendPassthrough(ctx context.Context, format llm.APIFormat, raw *httpclient.
 	if err != nil {
 		return nil, err
 	}
+	httpClient = withUpstreamLogging(ctx, httpClient)
 	if streaming {
 		// 流式响应返回后仍在读上游连接, 归还入口随响应交给消费方; 取不到响应时就地归还。
 		result, err := sendPassthroughStream(ctx, format, request, httpClient)
@@ -198,6 +199,7 @@ func sendConverted(ctx context.Context, format llm.APIFormat, raw *httpclient.Re
 	if err != nil {
 		return nil, err
 	}
+	httpClient = withUpstreamLogging(ctx, httpClient)
 	// 流式响应要等消费方读完才能归还连接, 故只在提交流式结果那一处移交, 其余出口一律就地归还。
 	committed := false
 	if closeIdle != nil {
