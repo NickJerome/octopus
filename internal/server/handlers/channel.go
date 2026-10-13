@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,8 @@ import (
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/price"
+	"github.com/bestruirui/octopus/internal/relay"
+	"github.com/bestruirui/octopus/internal/requesttransform"
 	"github.com/bestruirui/octopus/internal/rhttp"
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
@@ -53,6 +56,10 @@ func init() {
 		AddRoute(
 			router.NewRoute("/delete/:id", http.MethodDelete).
 				Handle(deleteChannel),
+		).
+		AddRoute(
+			router.NewRoute("/preview-transform", http.MethodPost).
+				Handle(previewTransform),
 		).
 		AddRoute(
 			router.NewRoute("/fetch-model", http.MethodPost).
@@ -95,7 +102,7 @@ func createChannel(c *gin.Context) {
 	}
 	channel, err := op.ChannelCreate(&req, c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		channelWriteError(c, err)
 		return
 	}
 	if err := addChannelModelPrices(channel.Models, c.Request.Context()); err != nil {
@@ -117,7 +124,7 @@ func updateChannel(c *gin.Context) {
 	}
 	channel, err := op.ChannelUpdate(&req, c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		channelWriteError(c, err)
 		return
 	}
 	if err := addChannelModelPrices(channel.Models, c.Request.Context()); err != nil {
@@ -129,6 +136,30 @@ func updateChannel(c *gin.Context) {
 		return
 	}
 	resp.Success(c, channel)
+}
+
+func channelWriteError(c *gin.Context, err error) {
+	var transformErr *requesttransform.Error
+	if errors.As(err, &transformErr) {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp.Error(c, http.StatusInternalServerError, err.Error())
+}
+
+func previewTransform(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2*requesttransform.MaxBodyBytes)
+	var input relay.TransformPreviewInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
+		return
+	}
+	preview, err := relay.PreviewRequestTransform(c.Request.Context(), input)
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp.Success(c, preview)
 }
 
 func enableChannel(c *gin.Context) {

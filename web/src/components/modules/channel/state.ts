@@ -1,4 +1,5 @@
 import type { ChannelDetail } from '@/api/channel';
+import { parseTransform } from '@/api/request-transform';
 
 // ChannelFormState 是渠道表单的全部可编辑内容。
 // 全按名称组织而不存主键: 后端凭据与模型都按名称匹配增删改, 而新建渠道和新加模型时主键尚不存在。
@@ -17,6 +18,7 @@ export type ChannelFormState = {
     custom_header: ChannelDetail['custom_header'];
     channel_proxy: string;
     param_override: string;
+    request_transform: string;
     match_regex: string;
 };
 
@@ -40,6 +42,7 @@ export const emptyFormState: ChannelFormState = {
     custom_header: [],
     channel_proxy: '',
     param_override: '',
+    request_transform: '',
     match_regex: '',
 };
 
@@ -60,6 +63,7 @@ export function fromChannel(channel: ChannelDetail): ChannelFormState {
         custom_header: channel.custom_header,
         channel_proxy: channel.channel_proxy,
         param_override: channel.param_override,
+        request_transform: channel.request_transform ? JSON.stringify(channel.request_transform, null, 2) : '',
         match_regex: channel.match_regex,
     };
 }
@@ -79,8 +83,14 @@ export function toChannelConfig(state: ChannelFormState) {
         custom_header: state.custom_header.filter((h) => h.header_key.trim() && h.header_value !== ''),
         channel_proxy: state.channel_proxy.trim(),
         param_override: state.param_override.trim(),
+        request_transform: validTransform(state.request_transform),
         match_regex: state.match_regex.trim(),
     };
+}
+
+// 模型探测也会读取编辑中的配置; 无效 JSON 不影响探测，提交按钮会单独拦截。
+function validTransform(value: string) {
+    try { return parseTransform(value); } catch { return null; }
 }
 
 // toChannelDetail 把表单状态还原为提交用的完整配置; 创建时 id 取 0, 由后端分配。

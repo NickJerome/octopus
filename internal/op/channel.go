@@ -8,6 +8,7 @@ import (
 
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
+	"github.com/bestruirui/octopus/internal/requesttransform"
 	"github.com/bestruirui/octopus/internal/utils/cache"
 	"github.com/charmbracelet/log"
 	"gorm.io/gorm"
@@ -91,8 +92,13 @@ func ChannelCreate(detail *model.ChannelDetail, ctx context.Context) (*model.Cha
 // 提交即全量而非按字段比对增量: 渠道是人工编辑的十几个字段, 表单本就一次给出完整配置,
 // 未列出的凭据与模型会被删除并级联删除其授权。
 func ChannelUpdate(detail *model.ChannelDetail, ctx context.Context) (*model.ChannelDetail, error) {
-	if _, ok := channelCache.Get(detail.ID); !ok {
+	existing, ok := channelCache.Get(detail.ID)
+	if !ok {
 		return nil, fmt.Errorf("channel not found")
+	}
+	// 旧客户端未提交此字段时保留规则; 显式 JSON null 才表示清空。
+	if len(detail.RequestTransform) == 0 {
+		detail.RequestTransform = existing.RequestTransform
 	}
 	if err := normalizeChannelDetail(detail); err != nil {
 		return nil, err
@@ -104,7 +110,7 @@ func ChannelUpdate(detail *model.ChannelDetail, ctx context.Context) (*model.Cha
 		if err := tx.Model(&model.Channel{}).Where("id = ?", detail.ID).
 			Select("name", "dialect", "enabled", "base_url",
 				"openai_chat_completion_path", "openai_response_path", "anthropic_message_path",
-				"proxy", "channel_proxy", "custom_header", "param_override", "match_regex").
+				"proxy", "channel_proxy", "custom_header", "param_override", "request_transform", "match_regex").
 			Updates(&model.Channel{ChannelConfig: detail.ChannelConfig}).Error; err != nil {
 			return fmt.Errorf("failed to update channel: %w", err)
 		}
@@ -164,6 +170,12 @@ func normalizeChannelConfig(config model.ChannelConfig) (model.ChannelConfig, er
 
 	config.ChannelProxy = strings.TrimSpace(config.ChannelProxy)
 	config.ParamOverride = strings.TrimSpace(config.ParamOverride)
+	if err := requesttransform.ValidateOverride(config.ParamOverride); err != nil {
+		return config, err
+	}
+	if _, err := requesttransform.Compile(config.RequestTransform); err != nil {
+		return config, err
+	}
 	config.MatchRegex = strings.TrimSpace(config.MatchRegex)
 	return config, nil
 }

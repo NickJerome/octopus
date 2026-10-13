@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { parseTransform } from '@/api/request-transform';
 import { ChevronLeft, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTranslations } from 'use-intl';
@@ -16,6 +17,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { FormGrants } from './FormGrants';
 import { FormKeys } from './FormKeys';
+import { FormTransform } from './FormTransform';
 import { IconButton } from '@/components/common/IconButton';
 import { useSettingStore } from '@/stores/setting';
 import {
@@ -66,8 +68,11 @@ function ChannelFormFields({ channel, onBack }: { channel?: ChannelDetail; onBac
     // 新建与编辑弹窗可同时存在, 控件 id 需按渠道隔离。
     const idPrefix = channel ? `channel-${channel.id}` : 'new-channel';
 
+    let transformValid = true;
+    try { parseTransform(state.request_transform); } catch { transformValid = false; }
+
     // 后端会拒的四项在此先挡: 名称与地址非空, 路径以 / 开头, 至少一份填了 Key 的凭据, 至少一个模型。
-    const canSubmit = state.name.trim() !== ''
+    const canSubmit = transformValid && state.name.trim() !== ''
         && state.base_url.trim() !== ''
         && [state.openai_chat_completion_path, state.openai_response_path, state.anthropic_message_path]
             .every((path) => path === '' || path.startsWith('/'))
@@ -102,7 +107,10 @@ function ChannelFormFields({ channel, onBack }: { channel?: ChannelDetail; onBac
         if (!canSubmit) return;
         const detail = toChannelDetail(state, channel?.id ?? 0);
         if (channel) {
-            updateChannel.mutate(detail, { onSuccess: () => setIsOpen(false) });
+            updateChannel.mutate(detail, {
+                onSuccess: () => setIsOpen(false),
+                onError: (error) => toast.error(error.message),
+            });
         } else {
             createChannel.mutate(detail, {
                 onSuccess: () => setIsOpen(false),
@@ -245,6 +253,8 @@ function ChannelFormFields({ channel, onBack }: { channel?: ChannelDetail; onBac
                                     className="min-h-24 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                 />
                             </div>
+
+                            <FormTransform state={state} setState={setState} idPrefix={idPrefix} />
 
                             <div className="space-y-2">
                                 <div className="flex items-center justify-between">

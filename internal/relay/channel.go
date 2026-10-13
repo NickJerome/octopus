@@ -1,20 +1,19 @@
 package relay
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"regexp"
 	"slices"
-	"strings"
 
 	"github.com/bestruirui/octopus/internal/model"
+	"github.com/bestruirui/octopus/internal/requesttransform"
 	"github.com/looplj/axonhub/llm/auth"
 	"github.com/looplj/axonhub/llm/httpclient"
 	"github.com/looplj/axonhub/llm/transformer"
 	"github.com/looplj/axonhub/llm/transformer/anthropic"
 	"github.com/looplj/axonhub/llm/transformer/openai"
 	"github.com/looplj/axonhub/llm/transformer/openai/responses"
-	"github.com/tidwall/sjson"
 )
 
 // buildOutbound 在渠道授权支持的协议内选出本轮上游协议, 构造对应的出站转换器, 并返回选中的协议和能否同协议透传。
@@ -54,29 +53,14 @@ func buildOutbound(channel model.Channel, grant model.ChannelGrant, channelKey m
 var clientHeaderPlaceholder = regexp.MustCompile(`\{client_header:[^}]+\}`)
 
 // applyChannelConfig 按渠道配置覆盖上游请求的参数并追加自定义 Header; model 与 stream 由转发流程决定, 不允许覆盖。
-func applyChannelConfig(channel model.Channel, request *httpclient.Request) error {
-	if channel.ParamOverride != "" {
-		var overrides map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(channel.ParamOverride), &overrides); err != nil {
-			return fmt.Errorf("invalid channel parameter override: %w", err)
-		}
-		body := request.Body
-		// 覆盖键可能自带点号或冒号, 转义后再作为 sjson 路径使用, 避免被解析成嵌套路径。
-		escape := strings.NewReplacer("\\", "\\\\", ".", "\\.", ":", "\\:")
-		for key, value := range overrides {
-			if key == "model" || key == "stream" {
-				continue
-			}
-			next, err := sjson.SetRawBytes(body, ":"+escape.Replace(key), value)
-			if err != nil {
-				return fmt.Errorf("apply channel parameter %q: %w", key, err)
-			}
-			body = next
-		}
-		request.Body = body
-		if len(request.JSONBody) > 0 {
-			request.JSONBody = slices.Clone(body)
-		}
+func applyChannelConfig(ctx context.Context, channel model.Channel, request *httpclient.Request, meta requesttransform.Context) error {
+	body, _, err := requesttransform.Rewrite(ctx, channel.ParamOverride, channel.RequestTransform, request.Body, meta)
+	if err != nil {
+		return err
+	}
+	request.Body = body
+	if len(request.JSONBody) > 0 {
+		request.JSONBody = slices.Clone(body)
 	}
 
 	// 转换器已经写入的认证等敏感 Header 不允许被自定义配置覆盖。

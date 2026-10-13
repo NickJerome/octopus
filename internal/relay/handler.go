@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"slices"
 	"time"
 
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
+	"github.com/bestruirui/octopus/internal/requesttransform"
 	"github.com/gin-contrib/sse"
 	"github.com/gin-gonic/gin"
 	"github.com/looplj/axonhub/llm"
@@ -130,8 +132,18 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 				continue
 			}
 
-			// 将分组成员配置的真实模型写入本轮上游请求。
-			raw.Body, err = sjson.SetBytes(raw.Body, "model", channelModel.Name)
+			// 每轮独占正文、Header 和查询参数; 转换或改写不能污染原始请求及下一轮。
+			roundRaw := *raw
+			roundRaw.Body = slices.Clone(raw.Body)
+			roundRaw.JSONBody = slices.Clone(raw.JSONBody)
+			roundRaw.Headers = raw.Headers.Clone()
+			roundRaw.Query = make(map[string][]string, len(raw.Query))
+			for key, values := range raw.Query {
+				roundRaw.Query[key] = slices.Clone(values)
+			}
+			roundRaw.Metadata = maps.Clone(raw.Metadata)
+			roundRaw.TransformerMetadata = maps.Clone(raw.TransformerMetadata)
+			roundRaw.Body, err = sjson.SetBytes(roundRaw.Body, "model", channelModel.Name)
 			if err != nil {
 				request.markFailed(err, "", nil)
 				rejectRequest(c, inbound, err)
@@ -139,7 +151,7 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 			}
 			// OpenAI Chat 流式响应需显式要求上游在末尾附带用量。
 			if metadata.Streaming && format == llm.APIFormatOpenAIChatCompletion {
-				raw.Body, err = sjson.SetBytes(raw.Body, "stream_options.include_usage", true)
+				roundRaw.Body, err = sjson.SetBytes(roundRaw.Body, "stream_options.include_usage", true)
 				if err != nil {
 					request.markFailed(err, "", nil)
 					rejectRequest(c, inbound, err)
@@ -150,6 +162,10 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 			// 在渠道授权支持的协议内选出本轮上游协议, 按该协议的路径与授权绑定的凭据构造出站转换器。
 			// 先于登记本轮目标: 选中的协议是本轮目标的一部分, 需与渠道和模型一并推给界面。
 			outbound, targetProtocol, passthrough, err := buildOutbound(channel, grant, *channelKey, requestProtocol)
+			transformMeta := requesttransform.Context{
+				SourceProtocol: transformProtocol(requestProtocol), TargetProtocol: transformProtocol(targetProtocol),
+				SourceModel: metadata.Model, TargetModel: channelModel.Name, Stream: metadata.Streaming,
+			}
 
 			// 为本轮上游调用建立独立取消入口并登记当前目标; 取消原因用于区分人工中止与响应超时。
 			roundCtx, cancelRoundCause := context.WithCancelCause(ctx)
@@ -177,9 +193,9 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 				})
 				// 客户端与渠道协议一致时直接透传, 其余组合通过 pipeline 转换。
 				if passthrough {
-					result, err = sendPassthrough(roundCtx, format, raw, channel, outbound, metadata.Streaming, channelModel.Name)
+					result, err = sendPassthrough(roundCtx, format, &roundRaw, channel, outbound, metadata.Streaming, channelModel.Name, transformMeta)
 				} else {
-					result, err = sendConverted(roundCtx, format, raw, channel, outbound, metadata.Streaming)
+					result, err = sendConverted(roundCtx, format, &roundRaw, channel, outbound, metadata.Streaming, transformMeta)
 				}
 				// 上游调用返回即结束首响应等待; Stop 失败说明已到期, 主动取消可避免等待异步回调完成。
 				if !timeoutTimer.Stop() {
@@ -212,6 +228,18 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 					continue
 				}
 				cancelRound()
+				var transformErr *requesttransform.Error
+				if errors.As(err, &transformErr) {
+					releaseRouteProbe(group, item.ID)
+					request.markFailed(err, "", nil)
+					response := inbound.TransformError(c.Request.Context(), &llm.ResponseError{
+						StatusCode: http.StatusBadGateway,
+						Detail:     llm.ErrorDetail{Message: err.Error(), Type: "request_transform_error"},
+					})
+					c.Data(http.StatusBadGateway, "application/json", response.Body)
+					c.Abort()
+					return
+				}
 				// 本轮真实失败只计入当前渠道和成员, 客户端取消与人工中止不计为渠道故障。
 				metrics := model.StatsMetrics{WaitTime: time.Since(roundStartedAt).Milliseconds(), RequestFailed: 1}
 				_ = op.ChannelStatsUpdate(channel.ID, metrics)

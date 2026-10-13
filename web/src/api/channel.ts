@@ -1,5 +1,6 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from './client';
+import type { TransformConfig } from './request-transform';
 import { channelStatsQueryOptions, groupListQueryOptions, modelListQueryOptions } from './queries';
 import { formatStatsMetrics, type StatsMetrics, type StatsMetricsFormatted } from './stats';
 
@@ -71,6 +72,7 @@ export type ChannelDetail = {
     proxy: boolean;
     custom_header: CustomHeader[];
     param_override: string;
+    request_transform: TransformConfig | null;
     channel_proxy: string;
     match_regex: string;
 };
