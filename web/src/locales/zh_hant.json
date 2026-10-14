@@ -36,7 +36,39 @@
         "neverExpire": "永不過期",
         "daysLeft": "天後到期",
         "expired": "已過期",
-        "supportedModels": "支援的模型"
+        "supportedModels": "支援的模型",
+        "metric": {
+            "token": "詞元",
+            "cost": "費用"
+        },
+        "heatmap": {
+            "title": "每日用量",
+            "noData": "無數據"
+        },
+        "pie": {
+            "title": "模型用量",
+            "share": "佔比"
+        },
+        "recent": {
+            "title": "最近請求",
+            "empty": "暫無請求記錄",
+            "time": "時間",
+            "model": "模型",
+            "input": "輸入",
+            "output": "輸出",
+            "cacheRead": "快取讀取",
+            "cacheWrite": "快取寫入",
+            "firstToken": "首字",
+            "tps": "TPS",
+            "cost": "費用",
+            "status": {
+                "success": "成功",
+                "failed": "失敗",
+                "canceled": "已取消",
+                "running": "進行中",
+                "committed": "已回應"
+            }
+        }
     },
     "navbar": {
         "home": "主頁",

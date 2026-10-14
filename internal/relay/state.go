@@ -66,6 +66,7 @@ type RequestState struct {
 
 const streamBuffer = 16                              // 单个状态流连接的非阻塞消息缓冲容量。
 const maxFinished = 50                               // 进程内最多保留的已结束请求数量。
+const apiKeyRecentMax = 10                           // 单个 API Key 在进程内保留的最近已结束请求数量。
 const outputPublishInterval = 500 * time.Millisecond // 输出字符数实时推送的最短发布间隔。
 
 var (
@@ -73,6 +74,8 @@ var (
 	mu       sync.Mutex                             // 全部共享状态的互斥锁。
 	requests = make(map[uint64]*RequestState)       // 按请求 ID 保存的全部请求状态。
 	watchers = make(map[chan RequestState]struct{}) // 全部状态流 SSE 连接。
+
+	apiKeyRecent = make(map[int][]RequestState) // 按 API Key 保存的最近已结束请求快照, 新的在前; 追加总是换新底层数组, 已取出的切片不会被改动。
 )
 
 // newRequestState 分配请求 ID 并登记初始运行状态; 返回的记录是本请求后续全部状态写入的入口。
@@ -284,6 +287,15 @@ func (r *RequestState) finishLocked(usage *llm.Usage) {
 	_ = op.StatsDailyUpdate(context.Background(), metrics)
 	if r.apiKeyID > 0 {
 		_ = op.StatsAPIKeyUpdate(r.apiKeyID, metrics)
+		_ = op.StatsAPIKeyDailyUpdate(r.apiKeyID, metrics)
+		if r.TargetModel != "" {
+			_ = op.StatsAPIKeyModelUpdate(r.apiKeyID, r.TargetModel, metrics)
+		}
+		recent := append([]RequestState{*r}, apiKeyRecent[r.apiKeyID]...)
+		if len(recent) > apiKeyRecentMax {
+			recent = recent[:apiKeyRecentMax]
+		}
+		apiKeyRecent[r.apiKeyID] = recent
 	}
 	publishRequestLocked(r)
 
@@ -386,6 +398,22 @@ func ResponseBody(id uint64) string {
 	return ""
 }
 
+// APIKeyRecentRequests 返回指定 API Key 最近已结束的请求快照, 新的在前; 记录仅存于进程内存, 重启后为空。
+func APIKeyRecentRequests(apiKeyID int) []RequestState {
+	mu.Lock()
+	defer mu.Unlock()
+
+	return apiKeyRecent[apiKeyID]
+}
+
+// ForgetAPIKey 丢弃指定 API Key 的最近请求记录, 供密钥删除后清理。
+func ForgetAPIKey(apiKeyID int) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	delete(apiKeyRecent, apiKeyID)
+}
+
 // Clear 删除全部已结束的请求记录。
 func Clear() {
 	mu.Lock()
@@ -396,4 +424,5 @@ func Clear() {
 			delete(requests, id)
 		}
 	}
+	clear(apiKeyRecent)
 }

@@ -31,6 +31,18 @@ type StatsAPIKey struct {
 	StatsMetrics
 }
 
+type StatsAPIKeyDaily struct {
+	APIKeyID int    `json:"api_key_id" gorm:"primaryKey"`
+	Date     string `json:"date" gorm:"primaryKey"` // 格式：20060102
+	StatsMetrics
+}
+
+type StatsAPIKeyModel struct {
+	APIKeyID int    `json:"api_key_id" gorm:"primaryKey"`
+	Model    string `json:"model" gorm:"primaryKey"`
+	StatsMetrics
+}
+
 // Add aggregates another StatsMetrics into the current one.
 func (s *StatsMetrics) Add(delta StatsMetrics) {
 	s.InputToken += delta.InputToken

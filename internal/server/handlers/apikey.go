@@ -4,9 +4,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
+	"github.com/bestruirui/octopus/internal/relay"
 	"github.com/bestruirui/octopus/internal/server/auth"
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
@@ -14,6 +16,20 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
 )
+
+// apiKeyRecentRequest 是密钥概览最近请求的精简视图, 只保留展示所需字段。
+type apiKeyRecentRequest struct {
+	Time         time.Time `json:"time"`           // 请求到达时间。
+	Status       string    `json:"status"`         // 请求终态。
+	Model        string    `json:"model"`          // 实际请求上游的模型名称, 未选出目标时为请求的分组名称。
+	InputToken   int64     `json:"input_token"`    // 输入词元, 含缓存部分。
+	OutputToken  int64     `json:"output_token"`   // 输出词元。
+	CacheRead    int64     `json:"cache_read"`     // 命中缓存读取的输入词元。
+	CacheWrite   int64     `json:"cache_write"`    // 写入缓存的输入词元。
+	FirstTokenMS int64     `json:"first_token_ms"` // 首字节耗时毫秒, 非流式响应为零。
+	TPS          float64   `json:"tps"`            // 输出词元每秒, 无法计算时为零。
+	Cost         float64   `json:"cost"`           // 请求费用。
+}
 
 func init() {
 	router.NewGroupRouter("/api/v1/apikey").
@@ -96,6 +112,7 @@ func deleteAPIKey(c *gin.Context) {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+	relay.ForgetAPIKey(idNum)
 	resp.Success(c, nil)
 }
 
@@ -114,9 +131,52 @@ func getStatsAPIKeyById(c *gin.Context) {
 		})
 	}
 	info.SupportedModels = models
+
+	// 每日统计与首页热力图取同一 54 周窗口。
+	now := time.Now()
+	since := now.AddDate(0, 0, -(int(now.Weekday()) + 53*7)).Format("20060102")
+
+	records := relay.APIKeyRecentRequests(id)
+	recent := make([]apiKeyRecentRequest, 0, len(records))
+	for _, record := range records {
+		usage := record.Usage
+		generation := record.StreamDuration
+		if generation == 0 {
+			generation = record.ResponseDuration
+		}
+		tps := 0.0
+		if generation > 0 {
+			tps = float64(usage.CompletionTokens) / generation.Seconds()
+		}
+		targetModel := record.TargetModel
+		if targetModel == "" {
+			targetModel = record.Model
+		}
+		cacheRead, cacheWrite := int64(0), int64(0)
+		if usage.PromptTokensDetails != nil {
+			cacheRead = usage.PromptTokensDetails.CachedTokens
+			cacheWrite = usage.PromptTokensDetails.WriteCachedTokens
+		}
+		recent = append(recent, apiKeyRecentRequest{
+			Time:         record.StartedAt,
+			Status:       string(record.Status),
+			Model:        targetModel,
+			InputToken:   usage.PromptTokens,
+			OutputToken:  usage.CompletionTokens,
+			CacheRead:    cacheRead,
+			CacheWrite:   cacheWrite,
+			FirstTokenMS: record.FirstTokenDuration.Milliseconds(),
+			TPS:          tps,
+			Cost:         record.Cost,
+		})
+	}
+
 	resp.Success(c, map[string]any{
-		"stats": stats,
-		"info":  info,
+		"stats":  stats,
+		"info":   info,
+		"daily":  op.StatsAPIKeyDailyList(id, since),
+		"models": op.StatsAPIKeyModelList(id),
+		"recent": recent,
 	})
 }
 

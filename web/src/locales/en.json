@@ -36,7 +36,39 @@
         "neverExpire": "Never",
         "daysLeft": "days left",
         "expired": "Expired",
-        "supportedModels": "Supported Models"
+        "supportedModels": "Supported Models",
+        "metric": {
+            "token": "Tokens",
+            "cost": "Cost"
+        },
+        "heatmap": {
+            "title": "Daily Usage",
+            "noData": "No data"
+        },
+        "pie": {
+            "title": "Usage by Model",
+            "share": "Share"
+        },
+        "recent": {
+            "title": "Recent Requests",
+            "empty": "No requests yet",
+            "time": "Time",
+            "model": "Model",
+            "input": "Input",
+            "output": "Output",
+            "cacheRead": "Cache Read",
+            "cacheWrite": "Cache Write",
+            "firstToken": "First Token",
+            "tps": "TPS",
+            "cost": "Cost",
+            "status": {
+                "success": "Success",
+                "failed": "Failed",
+                "canceled": "Canceled",
+                "running": "Running",
+                "committed": "Committed"
+            }
+        }
     },
     "navbar": {
         "home": "Home",

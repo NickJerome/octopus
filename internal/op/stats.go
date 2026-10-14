@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -36,6 +37,26 @@ var channelKeyStatsNeedUpdateLock sync.Mutex           // 保护渠道凭据统�
 var statsAPIKeyCache = cache.New[int, model.StatsAPIKey](16)
 var statsAPIKeyCacheNeedUpdate = make(map[int]struct{})
 var statsAPIKeyCacheNeedUpdateLock sync.Mutex
+
+// apiKeyDailyKey 是 API Key 每日统计在缓存与待写集合中的复合主键。
+type apiKeyDailyKey struct {
+	apiKeyID int
+	date     string
+}
+
+var statsAPIKeyDailyCache = cache.New[apiKeyDailyKey, model.StatsAPIKeyDaily](16)
+var statsAPIKeyDailyNeedUpdate = make(map[apiKeyDailyKey]struct{})
+var statsAPIKeyDailyNeedUpdateLock sync.Mutex
+
+// apiKeyModelKey 是 API Key 模型统计在缓存与待写集合中的复合主键。
+type apiKeyModelKey struct {
+	apiKeyID int
+	model    string
+}
+
+var statsAPIKeyModelCache = cache.New[apiKeyModelKey, model.StatsAPIKeyModel](16)
+var statsAPIKeyModelNeedUpdate = make(map[apiKeyModelKey]struct{})
+var statsAPIKeyModelNeedUpdateLock sync.Mutex
 
 func StatsSaveDBTask() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -71,19 +92,21 @@ func StatsSaveDB(ctx context.Context) error {
 	modelIDs := drainDirtySet(&channelModelStatsNeedUpdateLock, channelModelStatsNeedUpdate)
 	keyIDs := drainDirtySet(&channelKeyStatsNeedUpdateLock, channelKeyStatsNeedUpdate)
 	apiKeyIDs := drainDirtySet(&statsAPIKeyCacheNeedUpdateLock, statsAPIKeyCacheNeedUpdate)
+	apiKeyDailyKeys := drainDirtySet(&statsAPIKeyDailyNeedUpdateLock, statsAPIKeyDailyNeedUpdate)
+	apiKeyModelKeys := drainDirtySet(&statsAPIKeyModelNeedUpdateLock, statsAPIKeyModelNeedUpdate)
 
-	if err := persistStatsSnapshots(ctx, totalSnap, dailySnap, hourlyAll, channelIDs, modelIDs, keyIDs, apiKeyIDs); err != nil {
-		restoreStatsDirty(channelIDs, modelIDs, keyIDs, apiKeyIDs)
+	if err := persistStatsSnapshots(ctx, totalSnap, dailySnap, hourlyAll, channelIDs, modelIDs, keyIDs, apiKeyIDs, apiKeyDailyKeys, apiKeyModelKeys); err != nil {
+		restoreStatsDirty(channelIDs, modelIDs, keyIDs, apiKeyIDs, apiKeyDailyKeys, apiKeyModelKeys)
 		return err
 	}
 	return nil
 }
 
 // drainDirtySet 取出并清空一个待写集合。
-func drainDirtySet(lock *sync.Mutex, set map[int]struct{}) []int {
+func drainDirtySet[K comparable](lock *sync.Mutex, set map[K]struct{}) []K {
 	lock.Lock()
 	defer lock.Unlock()
-	ids := make([]int, 0, len(set))
+	ids := make([]K, 0, len(set))
 	for id := range set {
 		ids = append(ids, id)
 		delete(set, id)
@@ -92,7 +115,7 @@ func drainDirtySet(lock *sync.Mutex, set map[int]struct{}) []int {
 }
 
 // restoreDirtySet 把一批主键放回待写集合, 用于持久化失败后重试。
-func restoreDirtySet(lock *sync.Mutex, set map[int]struct{}, ids []int) {
+func restoreDirtySet[K comparable](lock *sync.Mutex, set map[K]struct{}, ids []K) {
 	lock.Lock()
 	defer lock.Unlock()
 	for _, id := range ids {
@@ -101,11 +124,13 @@ func restoreDirtySet(lock *sync.Mutex, set map[int]struct{}, ids []int) {
 }
 
 // restoreStatsDirty 在统计持久化失败后恢复本批待写标记。
-func restoreStatsDirty(channelIDs, modelIDs, keyIDs, apiKeyIDs []int) {
+func restoreStatsDirty(channelIDs, modelIDs, keyIDs, apiKeyIDs []int, apiKeyDailyKeys []apiKeyDailyKey, apiKeyModelKeys []apiKeyModelKey) {
 	restoreDirtySet(&channelStatsNeedUpdateLock, channelStatsNeedUpdate, channelIDs)
 	restoreDirtySet(&channelModelStatsNeedUpdateLock, channelModelStatsNeedUpdate, modelIDs)
 	restoreDirtySet(&channelKeyStatsNeedUpdateLock, channelKeyStatsNeedUpdate, keyIDs)
 	restoreDirtySet(&statsAPIKeyCacheNeedUpdateLock, statsAPIKeyCacheNeedUpdate, apiKeyIDs)
+	restoreDirtySet(&statsAPIKeyDailyNeedUpdateLock, statsAPIKeyDailyNeedUpdate, apiKeyDailyKeys)
+	restoreDirtySet(&statsAPIKeyModelNeedUpdateLock, statsAPIKeyModelNeedUpdate, apiKeyModelKeys)
 }
 
 func persistStatsSnapshots(
@@ -117,6 +142,8 @@ func persistStatsSnapshots(
 	modelIDs []int,
 	keyIDs []int,
 	apiKeyIDs []int,
+	apiKeyDailyKeys []apiKeyDailyKey,
+	apiKeyModelKeys []apiKeyModelKey,
 ) error {
 	dbConn := db.GetDB().WithContext(ctx)
 
@@ -192,6 +219,26 @@ func persistStatsSnapshots(
 		}
 	}
 
+	for _, key := range apiKeyDailyKeys {
+		daily, ok := statsAPIKeyDailyCache.Get(key)
+		if !ok {
+			continue
+		}
+		if result := dbConn.Save(&daily); result.Error != nil {
+			return result.Error
+		}
+	}
+
+	for _, key := range apiKeyModelKeys {
+		apiKeyModel, ok := statsAPIKeyModelCache.Get(key)
+		if !ok {
+			continue
+		}
+		if result := dbConn.Save(&apiKeyModel); result.Error != nil {
+			return result.Error
+		}
+	}
+
 	return nil
 }
 
@@ -211,9 +258,11 @@ func statsSaveDBWithDailyOverride(ctx context.Context, dailyOverride model.Stats
 	modelIDs := drainDirtySet(&channelModelStatsNeedUpdateLock, channelModelStatsNeedUpdate)
 	keyIDs := drainDirtySet(&channelKeyStatsNeedUpdateLock, channelKeyStatsNeedUpdate)
 	apiKeyIDs := drainDirtySet(&statsAPIKeyCacheNeedUpdateLock, statsAPIKeyCacheNeedUpdate)
+	apiKeyDailyKeys := drainDirtySet(&statsAPIKeyDailyNeedUpdateLock, statsAPIKeyDailyNeedUpdate)
+	apiKeyModelKeys := drainDirtySet(&statsAPIKeyModelNeedUpdateLock, statsAPIKeyModelNeedUpdate)
 
-	if err := persistStatsSnapshots(ctx, totalSnap, dailyOverride, hourlyAll, channelIDs, modelIDs, keyIDs, apiKeyIDs); err != nil {
-		restoreStatsDirty(channelIDs, modelIDs, keyIDs, apiKeyIDs)
+	if err := persistStatsSnapshots(ctx, totalSnap, dailyOverride, hourlyAll, channelIDs, modelIDs, keyIDs, apiKeyIDs, apiKeyDailyKeys, apiKeyModelKeys); err != nil {
+		restoreStatsDirty(channelIDs, modelIDs, keyIDs, apiKeyIDs, apiKeyDailyKeys, apiKeyModelKeys)
 		return err
 	}
 	return nil
@@ -323,16 +372,78 @@ func StatsAPIKeyUpdate(apiKeyID int, metrics model.StatsMetrics) error {
 	return nil
 }
 
+// StatsAPIKeyDailyUpdate 累加 API Key 当日统计并标记对应日期待持久化。
+func StatsAPIKeyDailyUpdate(apiKeyID int, metrics model.StatsMetrics) error {
+	key := apiKeyDailyKey{apiKeyID: apiKeyID, date: time.Now().Format("20060102")}
+	statsAPIKeyDailyNeedUpdateLock.Lock()
+	defer statsAPIKeyDailyNeedUpdateLock.Unlock()
+	daily, ok := statsAPIKeyDailyCache.Get(key)
+	if !ok {
+		daily = model.StatsAPIKeyDaily{
+			APIKeyID: apiKeyID,
+			Date:     key.date,
+		}
+	}
+	daily.StatsMetrics.Add(metrics)
+	statsAPIKeyDailyCache.Set(key, daily)
+	statsAPIKeyDailyNeedUpdate[key] = struct{}{}
+	return nil
+}
+
+// StatsAPIKeyModelUpdate 累加 API Key 模型统计并标记对应模型待持久化。
+func StatsAPIKeyModelUpdate(apiKeyID int, modelName string, metrics model.StatsMetrics) error {
+	key := apiKeyModelKey{apiKeyID: apiKeyID, model: modelName}
+	statsAPIKeyModelNeedUpdateLock.Lock()
+	defer statsAPIKeyModelNeedUpdateLock.Unlock()
+	apiKeyModel, ok := statsAPIKeyModelCache.Get(key)
+	if !ok {
+		apiKeyModel = model.StatsAPIKeyModel{
+			APIKeyID: apiKeyID,
+			Model:    modelName,
+		}
+	}
+	apiKeyModel.StatsMetrics.Add(metrics)
+	statsAPIKeyModelCache.Set(key, apiKeyModel)
+	statsAPIKeyModelNeedUpdate[key] = struct{}{}
+	return nil
+}
+
 func StatsAPIKeyDel(id int) error {
 	statsAPIKeyCacheNeedUpdateLock.Lock()
 	if _, ok := statsAPIKeyCache.Get(id); !ok {
 		statsAPIKeyCacheNeedUpdateLock.Unlock()
-		return nil
+	} else {
+		statsAPIKeyCache.Del(id)
+		delete(statsAPIKeyCacheNeedUpdate, id)
+		statsAPIKeyCacheNeedUpdateLock.Unlock()
 	}
-	statsAPIKeyCache.Del(id)
-	delete(statsAPIKeyCacheNeedUpdate, id)
-	statsAPIKeyCacheNeedUpdateLock.Unlock()
-	return db.GetDB().Delete(&model.StatsAPIKey{}, id).Error
+
+	statsAPIKeyDailyNeedUpdateLock.Lock()
+	for key := range statsAPIKeyDailyCache.GetAll() {
+		if key.apiKeyID == id {
+			statsAPIKeyDailyCache.Del(key)
+			delete(statsAPIKeyDailyNeedUpdate, key)
+		}
+	}
+	statsAPIKeyDailyNeedUpdateLock.Unlock()
+
+	statsAPIKeyModelNeedUpdateLock.Lock()
+	for key := range statsAPIKeyModelCache.GetAll() {
+		if key.apiKeyID == id {
+			statsAPIKeyModelCache.Del(key)
+			delete(statsAPIKeyModelNeedUpdate, key)
+		}
+	}
+	statsAPIKeyModelNeedUpdateLock.Unlock()
+
+	dbConn := db.GetDB()
+	if err := dbConn.Where("api_key_id = ?", id).Delete(&model.StatsAPIKeyDaily{}).Error; err != nil {
+		return err
+	}
+	if err := dbConn.Where("api_key_id = ?", id).Delete(&model.StatsAPIKeyModel{}).Error; err != nil {
+		return err
+	}
+	return dbConn.Delete(&model.StatsAPIKey{}, id).Error
 }
 
 func StatsTotalGet() model.StatsTotal {
@@ -365,6 +476,35 @@ func StatsAPIKeyList() []model.StatsAPIKey {
 		apiKeys = append(apiKeys, v)
 	}
 	return apiKeys
+}
+
+// StatsAPIKeyDailyList 返回指定 API Key 自 since 当天(含)起的每日统计, 按日期升序。
+// 只取窗口内的数据: 界面上的热力图有固定跨度, 缓存里的更早日期不外发。
+func StatsAPIKeyDailyList(apiKeyID int, since string) []model.StatsAPIKeyDaily {
+	all := statsAPIKeyDailyCache.GetAll()
+	list := make([]model.StatsAPIKeyDaily, 0, len(all))
+	for key, daily := range all {
+		if key.apiKeyID != apiKeyID || key.date < since {
+			continue
+		}
+		list = append(list, daily)
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].Date < list[j].Date })
+	return list
+}
+
+// StatsAPIKeyModelList 返回指定 API Key 的全部模型统计, 按模型名称排序保证顺序稳定。
+func StatsAPIKeyModelList(apiKeyID int) []model.StatsAPIKeyModel {
+	all := statsAPIKeyModelCache.GetAll()
+	list := make([]model.StatsAPIKeyModel, 0, len(all))
+	for key, apiKeyModel := range all {
+		if key.apiKeyID != apiKeyID {
+			continue
+		}
+		list = append(list, apiKeyModel)
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].Model < list[j].Model })
+	return list
 }
 
 func StatsHourlyGet() []model.StatsHourly {
@@ -453,6 +593,34 @@ func statsRefreshCache(ctx context.Context) error {
 	statsAPIKeyCacheNeedUpdateLock.Unlock()
 	for _, v := range loadedAPIKeys {
 		statsAPIKeyCache.Set(v.APIKeyID, v)
+	}
+
+	var loadedAPIKeyDailies []model.StatsAPIKeyDaily
+	result = dbConn.Find(&loadedAPIKeyDailies)
+	if result.Error != nil {
+		return fmt.Errorf("failed to get api key daily stats: %v", result.Error)
+	}
+
+	statsAPIKeyDailyCache.Clear()
+	statsAPIKeyDailyNeedUpdateLock.Lock()
+	clear(statsAPIKeyDailyNeedUpdate)
+	statsAPIKeyDailyNeedUpdateLock.Unlock()
+	for _, v := range loadedAPIKeyDailies {
+		statsAPIKeyDailyCache.Set(apiKeyDailyKey{apiKeyID: v.APIKeyID, date: v.Date}, v)
+	}
+
+	var loadedAPIKeyModels []model.StatsAPIKeyModel
+	result = dbConn.Find(&loadedAPIKeyModels)
+	if result.Error != nil {
+		return fmt.Errorf("failed to get api key model stats: %v", result.Error)
+	}
+
+	statsAPIKeyModelCache.Clear()
+	statsAPIKeyModelNeedUpdateLock.Lock()
+	clear(statsAPIKeyModelNeedUpdate)
+	statsAPIKeyModelNeedUpdateLock.Unlock()
+	for _, v := range loadedAPIKeyModels {
+		statsAPIKeyModelCache.Set(apiKeyModelKey{apiKeyID: v.APIKeyID, model: v.Model}, v)
 	}
 
 	statsHourlyCacheLock.Lock()

@@ -30,6 +30,9 @@ import {
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import dayjs from 'dayjs';
+import { DailyHeatmap } from './heatmap';
+import { ModelPie } from './model-pie';
+import { RecentRequests } from './recent';
 
 export function APIKeyDashboard() {
     const t = useTranslations('apiKeyDashboard');
@@ -258,6 +261,11 @@ export function APIKeyDashboard() {
                             </div>
                         </div>
                     </div>
+
+                    {/* Row 4: Daily heatmap, per-model pie and recent requests */}
+                    <DailyHeatmap stats={data.daily} />
+                    <ModelPie models={data.models} />
+                    <RecentRequests requests={data.recent} />
 
                     {/* Supported Models */}
                     {info.supported_models.length > 0 && (

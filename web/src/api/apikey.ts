@@ -2,8 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from './client';
 import { apiKeyDashboardStatsQueryOptions, apiKeyListQueryOptions } from './queries';
 import { useAuthStore } from './user';
-import { StatsAPIKey, StatsAPIKeyFormatted } from './stats';
 import { formatCount, formatMoney, formatTime } from '@/lib/utils';
+import { formatStatsMetrics, type StatsAPIKey, type StatsAPIKeyFormatted, type StatsMetrics, type StatsMetricsFormatted } from './stats';
 
 /**
  * API Key 数据
@@ -19,16 +19,62 @@ export interface APIKey {
 }
 
 /**
- * API Key Stats 响应（包含 stats 和 info）
+ * API Key 每日统计（热力图数据源）
+ */
+export interface APIKeyStatsDaily extends StatsMetrics {
+    api_key_id: number;
+    date: string;
+}
+
+/**
+ * API Key 模型维度统计（饼图数据源）
+ */
+export interface APIKeyStatsModel extends StatsMetrics {
+    api_key_id: number;
+    model: string;
+}
+
+/**
+ * API Key 最近请求的精简用量视图
+ */
+export interface APIKeyRecentRequest {
+    time: string; // 请求到达时间（RFC3339）
+    status: 'running' | 'committed' | 'success' | 'failed' | 'canceled'; // 请求终态
+    model: string; // 实际请求上游的模型名称
+    input_token: number; // 输入词元，含缓存部分
+    output_token: number;
+    cache_read: number; // 命中缓存读取的输入词元
+    cache_write: number; // 写入缓存的输入词元
+    first_token_ms: number; // 首字节耗时毫秒，非流式响应为零
+    tps: number; // 输出词元每秒，无法计算时为零
+    cost: number;
+}
+
+/**
+ * API Key Stats 响应（包含 stats、info、daily、models 和 recent）
  */
 export interface APIKeyStatsResponse {
     stats: StatsAPIKey;
     info: APIKey;
+    daily: APIKeyStatsDaily[];
+    models: APIKeyStatsModel[];
+    recent: APIKeyRecentRequest[];
+}
+
+export interface APIKeyStatsDailyFormatted extends StatsMetricsFormatted {
+    date: string;
+}
+
+export interface APIKeyStatsModelFormatted extends StatsMetricsFormatted {
+    model: string;
 }
 
 interface APIKeyStatsResponseFormatted {
     stats: StatsAPIKeyFormatted;
     info: APIKey;
+    daily: APIKeyStatsDailyFormatted[];
+    models: APIKeyStatsModelFormatted[];
+    recent: APIKeyRecentRequest[];
 }
 
 /**
@@ -72,6 +118,15 @@ export function useAPIKeyDashboardStats() {
                 request_count: formatCount(data.stats.request_success + data.stats.request_failed),
             },
             info: data.info,
+            daily: data.daily.map((item): APIKeyStatsDailyFormatted => ({
+                ...formatStatsMetrics(item),
+                date: item.date,
+            })),
+            models: data.models.map((item): APIKeyStatsModelFormatted => ({
+                ...formatStatsMetrics(item),
+                model: item.model,
+            })),
+            recent: data.recent,
         }),
         enabled: isAPIKeyAuth && isAuthenticated,
         refetchInterval: 30000,
